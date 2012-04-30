@@ -13,8 +13,8 @@ import (
 type Store interface {
 	// A Client is always returned -- it is nil only if ClientID is invalid.
 	// Use the error to indicate denied or unautorized access.
-	GetClient(*http.Request, clientID, scope string) (*Client, *Error)
-	CreateAuthCode(*AuthCodeRequest) (string, *Error)
+	GetClient(*http.Request, clientID, scope string) (*Client, error)
+	CreateAuthCode(*AuthCodeRequest) (string, error)
 }
 
 // ----------------------------------------------------------------------------
@@ -23,17 +23,17 @@ type Store interface {
 type Client interface {
 	// Unique identifier for the client.
 	ID() string
-	// The client type ("confidential" or "public") as decribed in:
+	// The registered client type ("confidential" or "public") as decribed in:
 	// http://tools.ietf.org/html/draft-ietf-oauth-v2-25#section-2.1
 	Type() string
-	// A default redirect_uri used when the client doesn't provide one.
-	// If an empty string is returned the URI is considered required.
-	DefaultRedirectURI() string
-	// Validates that the provided redirect_uri is valid. The specification
-	// is permissive and even allows multiple URIs, so the validation rules
-	// are up to the server implementation:
-	// http://tools.ietf.org/html/draft-ietf-oauth-v2-25#section-3.1.2.2
-	ValidateRedirectURI(string) bool
+	// The registered redirect_uri.
+	RedirectURI() string
+	// Validates that the provided redirect_uri is valid. It must return the
+	// same provided URI or an empty string if it is not valid.
+	// The specification is permissive and even allows multiple URIs, so the
+	// validation rules are up to the server implementation.
+	// Ref: http://tools.ietf.org/html/draft-ietf-oauth-v2-25#section-3.1.2.2
+	ValidateRedirectURI(string) (string, error)
 }
 
 // ----------------------------------------------------------------------------
@@ -81,12 +81,12 @@ func (s *Server) RegisterErrorURI(code errorCode, uri string) {
 }
 
 // NewError [...]
-func (s *Server) NewError(code errorCode, description string) *Error {
-	return &Error{code, description, s.errorURIs[code]}
+func (s *Server) NewError(code errorCode, description string) error {
+	return NewServerError(code, description, s.errorURIs[code])
 }
 
 // NewAuthCodeRequest [...]
-func (s *Server) NewAuthCodeRequest(r *http.Request) (*AuthCodeRequest, *Error) {
+func (s *Server) NewAuthCodeRequest(r *http.Request) (*AuthCodeRequest, error) {
 	// 1. Get data from the URL query.
 	q := r.URL.Query()
 	req := &AuthCodeRequest{
@@ -97,7 +97,7 @@ func (s *Server) NewAuthCodeRequest(r *http.Request) (*AuthCodeRequest, *Error) 
 		Scope:        q.Get("scope"),
 		State:        q.Get("state"),
 	}
-	var err *Error
+	var err error
 	// 2. Validate required parameters.
 	if req.ClientID == "" {
 		// Missing ClientID: no redirect.
@@ -123,20 +123,16 @@ func (s *Server) NewAuthCodeRequest(r *http.Request) (*AuthCodeRequest, *Error) 
 					"The \"client_id\" parameter is invalid.")
 			}
 		} else {
+			req.RedirectURI = client.ValidateRedirectURI(req.RedirectURI)
 			if req.RedirectURI == "" {
-				// Missing redirection URI: use the registered one, if any.
-				req.RedirectURI = client.DefaultRedirectURI()
-			}
-			if !client.ValidateRedirectURI(req.RedirectURI) {
-				// Mismatching redirection URI: no redirect.
-				req.RedirectURI = ""
+				// Missing, mismatching or invalid URI: no redirect.
 				if err == nil {
 					err = s.NewError(ErrorCodeInvalidRequest,
 						fmt.Sprintf("The redirection URI %q is invalid.",
 						req.RedirectURI))
 				}
 			} else if e := validateRedirectURI(req.RedirectURI); e != nil {
-				// Invalid redirection URI: no redirect.
+				// Invalid URI: no redirect.
 				req.RedirectURI = ""
 				if err == nil {
 					err = s.NewError(ErrorCodeInvalidRequest, e.Error())
@@ -154,7 +150,7 @@ func (s *Server) NewAuthCodeRequest(r *http.Request) (*AuthCodeRequest, *Error) 
 // An error is returned only if the redirection doesn't occur because
 // the client_id or redirect_uri are invalid. In this case the caller
 // must display an error page.
-func (s *Server) HandleAuthCodeRequest(w http.ResponseWriter, r *http.Request) *Error {
+func (s *Server) HandleAuthCodeRequest(w http.ResponseWriter, r *http.Request) error {
 	if req.Method != "GET" && req.Method != "POST" {
 	}
 	req, err := s.NewAuthCodeRequest(r)
@@ -175,10 +171,14 @@ func (s *Server) HandleAuthCodeRequest(w http.ResponseWriter, r *http.Request) *
 		query.Set("code", code)
 	} else {
 		// Add the error to the redirection URI.
+		e, ok := err.(Error)
+		if !ok {
+			e = s.NewError(ErrorCodeServerError, e.Error())
+		}
 		setQueryPairs(query,
-			"error", err.Code,
-			"error_description", err.Description,
-			"error_uri", err.URI,
+			"error", e.Code(),
+			"error_description", e.Description(),
+			"error_uri", e.URI(),
 		)
 	}
 	redirectURI.RawQuery = query.Encode()

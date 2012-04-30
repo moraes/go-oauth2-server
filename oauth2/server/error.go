@@ -12,14 +12,43 @@ const (
 	ErrorCodeunauthorizedClient      errorCode = "unauthorized_client"
 	ErrorCodeUnsupportedResponseType errorCode = "unsupported_response_type"
 )
+
 // Error [...]
-type Error struct {
-	Code        errorCode
-	Description string
-	URI         string
+type Error interface {
+	error
+	Code() errorCode
+	Description() string
+	URI() string
+}
+
+// NewServerError [...]
+func NewServerError(code, description, uri string) *ServerError {
+	return &ServerError{code, description, uri}
+}
+
+// ServerError [...]
+type ServerError struct {
+	code        errorCode
+	description string
+	uri         string
 }
 
 // Error [...]
-func (e *Error) Error() string {
-	return e.Code
+func (e *ServerError) Error() string {
+	return e.code
+}
+
+// Code [...]
+func (e *ServerError) Code() errorCode {
+	return e.code
+}
+
+// Description [...]
+func (e *ServerError) Description() string {
+	return e.description
+}
+
+// URI [...]
+func (e *ServerError) URI() string {
+	return e.uri
 }
