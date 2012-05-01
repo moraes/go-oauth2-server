@@ -13,17 +13,9 @@ const (
 	ErrorCodeUnsupportedResponseType errorCode = "unsupported_response_type"
 )
 
-// Error [...]
-type Error interface {
-	error
-	Code() errorCode
-	Description() string
-	URI() string
-}
-
 // NewServerError [...]
-func NewServerError(code, description, uri string) *ServerError {
-	return &ServerError{code, description, uri}
+func NewServerError(code errorCode, description, uri string) ServerError {
+	return ServerError{code, description, uri}
 }
 
 // ServerError [...]
@@ -34,21 +26,21 @@ type ServerError struct {
 }
 
 // Error [...]
-func (e *ServerError) Error() string {
-	return e.code
+func (e ServerError) Error() string {
+	return string(e.code)
 }
 
 // Code [...]
-func (e *ServerError) Code() errorCode {
+func (e ServerError) Code() errorCode {
 	return e.code
 }
 
 // Description [...]
-func (e *ServerError) Description() string {
+func (e ServerError) Description() string {
 	return e.description
 }
 
 // URI [...]
-func (e *ServerError) URI() string {
+func (e ServerError) URI() string {
 	return e.uri
 }
